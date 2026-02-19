@@ -1,0 +1,10 @@
+streamlit
+streamlit-autorefresh
+pandas
+numpy
+crcmod
+pymodbus==3.6.8
+paho-mqtt
+openpyxl
+gspread
+oauth2client
