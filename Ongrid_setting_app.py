@@ -57,6 +57,11 @@ def init_state():
         "write_mode": None,          # "enable" | "disable"
         "write_password": "",
         "write_unlocked": False,
+        # write target register
+        "write_register": None,     # e.g. "1540" or "1644"
+        "write_verify_register": None,  # e.g. "0802" or "1644"
+        "write_value_padded": None,
+        
         "write_value": None,
         "lock_sent_at": None,
         "response_cursor": 0
@@ -191,9 +196,9 @@ def run_state_machine():
         if time.time() < st.session_state.verify_at:
             return
     
-        publish("READ03**12345##1234567890,0802")
+        publish(f"READ03**12345##1234567890,{st.session_state.write_verify_register}")
         st.session_state.state = "VERIFY_EXPORT_ONCE"
-        st.session_state.pending_register = "0802"
+        st.session_state.pending_register = st.session_state.write_verify_register
         st.session_state.pending_since = time.time()
         st.session_state.parsed_payloads.clear()
         return
@@ -281,11 +286,11 @@ def run_state_machine():
                 st.session_state.export_limit = value
         
                 st.success(
-                    f"✅ Export limit successfully set to {value} W"
+                    f"✅ Register {st.session_state.write_verify_register} successfully set to {value}"
                 )
         
                 st.session_state.parse_debug.append(
-                    f"✔ Verification success: 0802={value}"
+                    f"✔ Verification success: {st.session_state.write_verify_register}={value}"
                 )
         
             else:
@@ -426,32 +431,54 @@ if st.session_state.state == "WRITE_PASSWORD":
             st.error("Invalid password")
 # --------------- Enter Export Limit Value ------------------------
 if st.session_state.state == "WRITE_VALUE" and st.session_state.write_unlocked:
-    st.subheader("⚙️ Set Export Limit")
 
-    # ENABLE → fixed to 1 W
-    if st.session_state.write_mode == "enable":
-        value = 1
-        st.session_state.write_value = 1
-        st.info("Zero export enabled → Export limit fixed to 1 W")
+    st.subheader("⚙️ Apply Setting")
 
-        if st.button("Set Export Limit"):
-            publish("UP#,1540:00001")
-            st.session_state.state = "WRITE_LOCK"
+    # EXPORT LIMIT FLOW
+    if st.session_state.write_mode in ("enable", "disable"):
 
-    # DISABLE → user chooses value
-    else:
-        value = st.number_input(
-            "Export Limit (W)",
-            min_value=1,
-            max_value=61000,
-            value=10000
-        )
+        if st.session_state.write_mode == "enable":
+            value = 1
+            st.session_state.write_value = 1
+            padded_val = "00001"
+            st.info("Zero export enabled → Export limit fixed to 1 W")
 
-        if st.button("Set Export Limit"):
+        else:
+            value = st.number_input(
+                "Export Limit (W)",
+                min_value=1,
+                max_value=61000,
+                value=10000
+            )
+
             padded_val = f"{value:05d}"
             st.session_state.write_value = value
 
+        if st.button("Set Export Limit"):
+            st.session_state.write_register = "1540"
+            st.session_state.write_verify_register = "0802"
+
             publish(f"UP#,1540:{padded_val}")
+            st.session_state.state = "WRITE_LOCK"
+
+
+    # EXPORT DEVICE FLOW
+    elif st.session_state.write_mode == "export_device":
+
+        val = st.session_state.write_value
+
+        names = {
+            0: "Disable",
+            1: "Meter",
+            2: "CT"
+        }
+
+        st.info(f"Selected Export Device: {names[val]}")
+
+        if st.button("Apply Export Device Setting"):
+
+            publish(f"UP#,1644:{st.session_state.write_value_padded}")
+
             st.session_state.state = "WRITE_LOCK"
 # -------------- LOCK ---------------------------------------
 if st.session_state.state == "WRITE_LOCK":
@@ -469,6 +496,54 @@ if st.session_state.state == "WRITE_LOCK":
         st.session_state.parsed_payloads.clear()
         st.session_state.response_cursor = len(st.session_state.response_log)
 
+# =====================================================
+# EXPORT DEVICE CONTROL (REGISTER 1644)
+# =====================================================
+
+st.divider()
+st.subheader("Export Device Selection")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    disable_dev = st.button("Disable", key="dev_disable")
+    st.caption("Value = 0")
+
+with col2:
+    meter_dev = st.button("Meter", key="dev_meter")
+    st.caption("Value = 1")
+
+with col3:
+    ct_dev = st.button("CT", key="dev_ct")
+    st.caption("Value = 2")
+
+
+def start_export_device_flow(value):
+    st.session_state.write_mode = "export_device"
+    st.session_state.write_register = "1644"
+    st.session_state.write_verify_register = "1644"
+    st.session_state.write_value = value
+    st.session_state.write_value_padded = f"{value:05d}"
+
+    st.session_state.write_unlocked = False
+
+    # reset pipeline
+    st.session_state.pending_register = None
+    st.session_state.pending_since = None
+    st.session_state.parsed_payloads.clear()
+    st.session_state.response_cursor = len(st.session_state.response_log)
+
+    st.session_state.state = "WRITE_PASSWORD"
+
+
+if disable_dev:
+    start_export_device_flow(0)
+
+if meter_dev:
+    start_export_device_flow(1)
+
+if ct_dev:
+    start_export_device_flow(2)
 
 
 
